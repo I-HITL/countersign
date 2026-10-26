@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Countersign demo</title>
+<style>
+  body { font-family: -apple-system, system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }
+  h1 { font-size: 1.3rem; }
+  h2 { font-size: 1rem; margin-top: 2rem; border-bottom: 1px solid #ddd; padding-bottom: 0.3rem; }
+  section { margin-bottom: 1.5rem; }
+  .device { padding: 0.5rem; border: 1px solid #ccc; border-radius: 6px; margin-bottom: 0.4rem; cursor: pointer; font-family: monospace; font-size: 0.85rem; }
+  .device.selected { border-color: #2a6; background: #f0fff4; }
+  .approval { padding: 0.6rem; border: 1px solid #ccc; border-radius: 6px; margin-bottom: 0.4rem; }
+  .approval .message { font-family: monospace; font-size: 0.85rem; }
+  .status { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.8rem; font-weight: bold; margin-left: 0.5rem; }
+  .status.pending { background: #fff3cd; }
+  .status.approved { background: #d4edda; }
+  .status.rejected, .status.expired, .status.declined { background: #f8d7da; }
+  textarea, input { width: 100%; box-sizing: border-box; padding: 0.4rem; font-size: 0.9rem; }
+  input[type=number] { width: 6rem; }
+  button { padding: 0.4rem 0.8rem; margin-top: 0.4rem; cursor: pointer; }
+  .muted { color: #777; font-size: 0.85rem; }
+  .reasons { color: #a00; font-size: 0.8rem; }
+</style>
+</head>
+<body>
+
+<h1>Countersign demo</h1>
+<p class="muted">This demo records approvals. It does not transfer money.</p>
+<p id="error" class="reasons" role="alert"></p>
+
+<section>
+  <h2>Administrator authentication</h2>
+  <label for="adminToken">Administrator API token</label>
+  <input id="adminToken" type="password" autocomplete="off" />
+</section>
+
+<section>
+  <h2>1. Enrolled devices</h2>
+  <button id="refreshDevices">Refresh</button>
+  <div id="devices"></div>
+</section>
+
+<section>
+  <h2>2. Send an approval request</h2>
+  <p class="muted">Selected device: <span id="selectedDevice">none</span></p>
+  <label for="requestText">Request</label>
+  <textarea id="requestText" rows="2">wire transfer of $500 to Alice Chen (Acct ...4471)</textarea>
+  <label for="expiryMinutes">Expires in minutes</label>
+  <input id="expiryMinutes" type="number" min="1" max="1440" value="15" required />
+  <button id="createApproval" disabled>Create approval</button>
+</section>
+
+<section>
+  <h2>3. Approvals</h2>
+  <p class="muted">Approve on the phone -- this list polls and updates live.</p>
+  <div id="approvals"></div>
+</section>
+
+<script>
+const BASE = "/v1";
+let selectedDeviceId = null;
+let creatingApproval = false;
+const tracked = [];
+const byId = (id) => document.getElementById(id);
+
+function textElement(tag, className, text) {
+  const element = document.createElement(tag);
+  element.className = className;
+  element.textContent = text;
+  return element;
+}
+
+function showError(error) {
+  byId("error").textContent = error ? error.message : "";
+}
+
+function updateCreateButton() {
+  byId("createApproval").disabled = creatingApproval || !selectedDeviceId || !byId("requestText").value.trim();
+}
+
+async function api(path, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers || {}, {
+    "Authorization": "Bearer " + byId("adminToken").value.trim(),
+  });
+  const resp = await fetch(BASE + path, options);
+  const body = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new Error(body.detail ? JSON.stringify(body.detail) : resp.statusText);
+  return body;
+}
+
+async function refreshDevices() {
+  if (!byId("adminToken").value.trim()) return;
+  const el = byId("devices");
+  try {
+    const devices = await api("/devices");
+    if (!devices.some((d) => d.device_id === selectedDeviceId && d.status === "approved")) {
+      selectedDeviceId = null;
+      byId("selectedDevice").textContent = "none";
+    }
+    el.replaceChildren();
+    if (devices.length === 0) {
+      el.appendChild(textElement("p", "muted", "No devices enrolled yet. Enroll one from the app."));
+    }
+    for (const d of devices) {
+      const row = document.createElement("div");
+      row.className = "device" + (d.device_id === selectedDeviceId ? " selected" : "");
+      row.textContent = d.device_id.slice(0, 16) + "...  (" + d.status + ")";
+      if (d.status === "pending_manual_approval") {
+        const approve = document.createElement("button");
+        approve.textContent = "Approve enrollment";
+        approve.onclick = async (event) => {
+          event.stopPropagation();
+          approve.disabled = true;
+          showError(null);
+          try {
+            await api("/admin/enrollments/" + encodeURIComponent(d.device_id) + "/approve", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ administrator: "local-demo-admin" }),
+            });
+            await refreshDevices();
+          } catch (error) {
+            showError(error);
+            approve.disabled = false;
+          }
+        };
+        row.appendChild(approve);
+      }
+      if (d.status === "approved") {
+        const select = document.createElement("button");
+        select.textContent = d.device_id === selectedDeviceId ? "Selected" : "Select";
+        select.onclick = () => {
+          selectedDeviceId = d.device_id;
+          byId("selectedDevice").textContent = d.device_id.slice(0, 16) + "...";
+          updateCreateButton();
+          refreshDevices();
+        };
+        row.appendChild(select);
+      }
+      el.appendChild(row);
+    }
+    updateCreateButton();
+  } catch (e) {
+    selectedDeviceId = null;
+    byId("selectedDevice").textContent = "none";
+    el.replaceChildren(textElement("p", "reasons", e.message));
+    updateCreateButton();
+  }
+}
+
+async function createApproval() {
+  const text = byId("requestText").value.trim();
+  if (creatingApproval || !selectedDeviceId || !text) return;
+  if (!byId("expiryMinutes").reportValidity()) return;
+  creatingApproval = true;
+  updateCreateButton();
+  showError(null);
+  try {
+    const result = await api("/approvals", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id: selectedDeviceId, text, ttl_seconds: Number(byId("expiryMinutes").value) * 60 }),
+    });
+    tracked.unshift(result.ref);
+    await renderApprovals();
+  } catch (error) {
+    showError(error);
+  } finally {
+    creatingApproval = false;
+    updateCreateButton();
+  }
+}
+
+async function renderApprovals() {
+  const el = byId("approvals");
+  if (tracked.length === 0) {
+    el.replaceChildren(textElement("p", "muted", "Nothing sent yet."));
+    return;
+  }
+  const rows = await Promise.all(tracked.map(async (ref) => {
+    try {
+      return await api("/admin/approvals/" + encodeURIComponent(ref));
+    } catch (e) {
+      return { ref, message: e.message, status: "error" };
+    }
+  }));
+  el.replaceChildren();
+  for (const a of rows) {
+    const row = document.createElement("div");
+    row.className = "approval";
+    row.appendChild(textElement("div", "message", a.message));
+    const knownStatus = ["pending", "approved", "rejected", "expired", "declined"].includes(a.status) ? a.status : "error";
+    row.appendChild(textElement("span", "status " + knownStatus, a.status));
+    el.appendChild(row);
+  }
+}
+
+byId("refreshDevices").onclick = () => { showError(null); refreshDevices(); };
+byId("createApproval").onclick = createApproval;
+byId("requestText").oninput = updateCreateButton;
+byId("adminToken").oninput = () => {
+  selectedDeviceId = null;
+  byId("selectedDevice").textContent = "none";
+  byId("devices").replaceChildren();
+  updateCreateButton();
+};
+
+renderApprovals();
+setInterval(refreshDevices, 3000);
+setInterval(renderApprovals, 2000);
+</script>
+
+</body>
+</html>

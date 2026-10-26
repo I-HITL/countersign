@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Cleartext is limited to loopback, used only by the separate simulation service. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:label="@string/simulation_app_name"
+        android:networkSecurityConfig="@xml/simulation_network_security_config"
+        tools:replace="android:label" />
+</manifest>

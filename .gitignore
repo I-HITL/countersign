@@ -1,0 +1,40 @@
+# Python and build output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+build/
+dist/
+wheels/
+*.egg-info/
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.ios.example
+!.env.android.example
+/secrets/
+*.jks
+*.keystore
+*.p8
+*.p12
+*.mobileprovision
+
+# Local databases and demo output
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+runs/
+
+# IDE / OS state
+.idea/
+.DS_Store
+xcuserdata/
+DerivedData/
+
+# Google roots are fetched by the operator; Apple's public root is included.
+/attestation_roots/*
+!/attestation_roots/apple_app_attestation_root.pem

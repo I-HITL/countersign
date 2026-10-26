@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="cs_background">#FFFFFF</color>
+    <color name="cs_surface">#FFFFFF</color>
+    <color name="cs_surface_alt">#F2F5F3</color>
+    <color name="cs_text">#172A3A</color>
+    <color name="cs_text_secondary">#5B6770</color>
+    <color name="cs_primary">#287C39</color>
+    <color name="cs_on_primary">#FFFFFF</color>
+    <color name="cs_outline">#E0E5E2</color>
+    <color name="cs_error">#AD3434</color>
+    <color name="cs_error_surface">#FCECEC</color>
+    <color name="cs_success_surface">#E3F3E6</color>
+    <color name="cs_logo_background">#FFFFFF</color>
+    <color name="cs_disabled">#DCE3DE</color>
+    <color name="cs_disabled_text">#68776D</color>
+    <color name="cs_ripple">#24287C39</color>
+    <bool name="cs_light_system_bars">true</bool>
+</resources>

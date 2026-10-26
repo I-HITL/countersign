@@ -1,0 +1,29 @@
+[project]
+name = "countersign"
+version = "0.1.0"
+description = "Biometric approval demo for Android and iOS with a shared verification backend"
+license = "MIT"
+requires-python = ">=3.13"
+dependencies = [
+    "asn1crypto>=1.5.1",
+    "cbor2>=5.6.5",
+    "cryptography>=50.0.1",
+    "fastapi>=0.141.1",
+    "google-auth>=2.58.1",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.5",
+    "requests>=2.34.2",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+testpaths = ["tests"]

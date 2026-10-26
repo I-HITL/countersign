@@ -1,0 +1,7 @@
+# Copy to deployment.properties for genuine debug/release builds.
+# No trailing slash. Use the HTTPS address exposed by your backend.
+backendUrl=https://your-backend.example.com
+# Match COUNTERSIGN_API_TOKEN. Never use the administrator token here.
+deviceApiToken=replace-with-device-token
+# Numeric project number from the Google Cloud project linked in Play Console.
+cloudProjectNumber=0

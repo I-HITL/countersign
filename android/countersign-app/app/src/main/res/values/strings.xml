@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Countersign</string>
+    <string name="approve">Approve with biometrics</string>
+    <string name="decline">Decline</string>
+    <string name="enroll">Enroll this device</string>
+    <string name="not_enrolled">Not enrolled yet.</string>
+    <string name="pending_approvals">Pending approvals</string>
+    <string name="no_pending_approvals">Nothing pending right now.</string>
+    <string name="refresh_requests">Refresh pending approvals</string>
+    <string name="back_to_requests">Back</string>
+    <string name="review_request">Review request</string>
+
+    <!-- Shared screen states and messages. Approval payloads come from the service verbatim. -->
+    <string name="device_pending_title">Pending administrator approval</string>
+    <string name="device_pending_description">Pending administrator approval\n%1$s…</string>
+    <string name="device_checking_title">Checking enrollment…</string>
+    <string name="device_retry_title">Enrollment failed</string>
+    <string name="device_unknown_title">Enrollment unavailable</string>
+    <string name="device_ready_description">Enrolled: %1$s...</string>
+    <string name="device_missing_description">Device not recognized. Please enroll again.</string>
+    <string name="device_enrolling">Enrolling…</string>
+    <string name="requests_enrollment_unknown_title">Enrollment unavailable</string>
+    <string name="requests_enrollment_unknown_description">Check with your administrator.</string>
+    <string name="requests_refresh_failed">Could not load approvals.</string>
+    <string name="count_unavailable">—</string>
+    <string name="request_reference">#%1$s</string>
+    <string name="request_tap_to_review">Expiry unavailable</string>
+    <string name="request_expires">Expires %1$s</string>
+    <string name="request_open_failed">Could not open approval.</string>
+    <string name="request_select_again">Select an approval from the list.</string>
+    <string name="request_loading">Loading…</string>
+    <string name="request_unavailable">Approval unavailable.</string>
+    <string name="request_approved">Approved</string>
+    <string name="request_declined">Declined</string>
+    <string name="request_rejected">Approval verification failed.</string>
+    <string name="request_status_unavailable">Status: %1$s</string>
+    <string name="request_result_with_reasons">%1$s\n%2$s</string>
+    <string name="approval_key_unavailable">Approval key unavailable. %1$s</string>
+    <string name="check_enrollment">Check enrollment.</string>
+    <string name="request_expired_during_authentication">Expired during authentication. Nothing was signed.</string>
+    <string name="authentication_no_key">No signing key returned. Nothing was approved.</string>
+    <string name="approval_cancelled">Cancelled. Nothing was signed.</string>
+    <string name="authentication_failed">Authentication failed: %1$s</string>
+    <string name="biometric_not_recognized">Biometric not recognized. Try again.</string>
+    <string name="biometric_prompt_title">Approve</string>
+    <string name="cancel">Cancel</string>
+    <string name="connection_unauthorized">Not authorized. Check connection credentials.</string>
+    <string name="connection_not_found">No longer available. Refresh the list.</string>
+    <string name="connection_conflict">No longer pending. Refresh the list.</string>
+    <string name="connection_http_error">Service error (HTTP %1$d). Please try again.</string>
+    <string name="connection_timeout">Connection timed out. Please try again.</string>
+    <string name="connection_unreachable">Could not reach the service. Check your connection.</string>
+    <string name="error_generic">Request failed. Please try again.</string>
+    <string name="request_expired_at">Expired %1$s</string>
+    <string name="request_expiry_loading">Checking expiry…</string>
+    <string name="approval_window_unfocused">Another window has focus. Return to this screen and try again.</string>
+</resources>

@@ -1,0 +1,15 @@
+*.iml
+.gradle/
+.kotlin/
+/local.properties
+.idea/
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+
+# Leftover local signing credentials -- never committed
+/keystore/
+keystore.properties
+/deployment.properties
