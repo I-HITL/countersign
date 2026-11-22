@@ -1,0 +1,35 @@
+[package]
+name = "countersign"
+version = "0.1.0"
+authors = ["Countersign contributors"]
+edition = "2021"
+description = "Countersign: human approval with the device's endorsement key (I-HITL)"
+license = "MIT"
+
+[dependencies]
+ledger_device_sdk = { version = "1.42", features = ["io_new"] }
+ledger_secure_sdk_sys = "1.18"
+
+[features]
+default = ["ledger_device_sdk/nano_nbgl"]
+debug = ["ledger_device_sdk/debug"]
+# Security probe, never for deployment: adds a command that calls the OS's
+# sign-without-code-hash syscall, to test on real hardware whether an
+# ordinary app may use it (see docs/SECURITY.md).
+probe = []
+
+# Load parameters. The app derives no BIP32 keys: it only uses the OS
+# endorsement key, which needs no curve/path grants and no special flag.
+[package.metadata.ledger]
+curve = []
+flags = "0"
+path = []
+name = "Countersign"
+nanosplus = { icon = "icons/countersign_14x14.gif" }
+nanox = { icon = "icons/countersign_14x14.gif" }
+stax = { icon = "icons/countersign_32x32.gif" }
+flex = { icon = "icons/countersign_40x40.gif" }
+apex_p = { icon = "icons/countersign_32x32.png" }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("apex_p", "stax", "flex", "nanos", "nanox", "nanosplus"))'] }

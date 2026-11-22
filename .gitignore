@@ -13,6 +13,7 @@ wheels/
 .env.*
 !.env.ios.example
 !.env.android.example
+!.env.ledger.example
 /secrets/
 *.jks
 *.keystore
@@ -35,6 +36,7 @@ runs/
 xcuserdata/
 DerivedData/
 
-# Google roots are fetched by the operator; Apple's public root is included.
+# Google roots are fetched by the operator; Apple's and Ledger's public roots are included.
 /attestation_roots/*
 !/attestation_roots/apple_app_attestation_root.pem
+!/attestation_roots/ledger_root_of_trust.txt

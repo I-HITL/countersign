@@ -22,7 +22,7 @@ ENROLLMENT_CHALLENGE_TTL = dt.timedelta(minutes=10)
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS pending_enrollments (
     enrollment_id TEXT PRIMARY KEY,
-    platform TEXT NOT NULL CHECK(platform IN ('android','ios')),
+    platform TEXT NOT NULL CHECK(platform IN ('android','ios','ledger')),
     challenge BLOB NOT NULL,
     created_at TEXT NOT NULL,
     ios_round TEXT,
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS pending_enrollments (
 
 CREATE TABLE IF NOT EXISTS devices (
     device_id TEXT PRIMARY KEY,
-    platform TEXT NOT NULL CHECK(platform IN ('android','ios')),
+    platform TEXT NOT NULL CHECK(platform IN ('android','ios','ledger')),
     public_key_pem TEXT NOT NULL,
     enrolled_at TEXT NOT NULL,
     package_name TEXT,
@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS devices (
     ios_key_id TEXT,
     ios_receipt_b64 TEXT,
     ios_assertion_counter INTEGER,
+    ledger_code_hash_hex TEXT,
+    ledger_owner_certificate_b64 TEXT,
+    ledger_device_public_key_hex TEXT,
+    ledger_issuer_certificate_b64 TEXT,
     status TEXT NOT NULL DEFAULT 'pending_manual_approval',
     approved_at TEXT,
     approved_by TEXT
@@ -62,6 +66,15 @@ CREATE TABLE IF NOT EXISTS approvals (
 );
 CREATE INDEX IF NOT EXISTS idx_approvals_device ON approvals(device_id);
 """
+
+
+def _table_ddl(table: str) -> str:
+    """The CREATE TABLE statement for `table` as written in _SCHEMA, which
+    the constraint migration re-runs after renaming the old table away."""
+    for statement in _SCHEMA.split(";"):
+        if f"CREATE TABLE IF NOT EXISTS {table} " in statement:
+            return statement.strip() + ";"
+    raise KeyError(table)
 
 
 def _iso(value: dt.datetime) -> str:
@@ -84,10 +97,34 @@ class Store:
         if db_path != ":memory:":
             self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        self._migrate_platform_constraint()
         self._migrate_devices_table()
 
+    def _migrate_platform_constraint(self) -> None:
+        """Databases created before Ledger support carry a CHECK constraint
+        that rejects platform='ledger'. SQLite cannot alter a constraint, so
+        rebuild the two affected tables (prototype scope, no data loss)."""
+        for table in ("pending_enrollments", "devices"):
+            sql = self._conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
+            ).fetchone()["sql"]
+            if "'ledger'" in sql:
+                continue
+            columns = [row["name"] for row in self._conn.execute(f"PRAGMA table_info({table})").fetchall()]
+            column_list = ", ".join(columns)
+            self._conn.executescript(
+                f"""
+                BEGIN;
+                ALTER TABLE {table} RENAME TO {table}_old;
+                {_table_ddl(table)}
+                INSERT INTO {table} ({column_list}) SELECT {column_list} FROM {table}_old;
+                DROP TABLE {table}_old;
+                COMMIT;
+                """
+            )
+
     def _migrate_devices_table(self) -> None:
-        """Add approval metadata to databases created before manual approval."""
+        """Add columns to databases created before manual approval / Ledger support."""
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(devices)").fetchall()}
         if "status" not in columns:
             self._conn.execute(
@@ -99,6 +136,14 @@ class Store:
             self._conn.execute("ALTER TABLE devices ADD COLUMN approved_at TEXT")
         if "approved_by" not in columns:
             self._conn.execute("ALTER TABLE devices ADD COLUMN approved_by TEXT")
+        if "ledger_code_hash_hex" not in columns:
+            self._conn.execute("ALTER TABLE devices ADD COLUMN ledger_code_hash_hex TEXT")
+        if "ledger_owner_certificate_b64" not in columns:
+            self._conn.execute("ALTER TABLE devices ADD COLUMN ledger_owner_certificate_b64 TEXT")
+        if "ledger_device_public_key_hex" not in columns:
+            self._conn.execute("ALTER TABLE devices ADD COLUMN ledger_device_public_key_hex TEXT")
+        if "ledger_issuer_certificate_b64" not in columns:
+            self._conn.execute("ALTER TABLE devices ADD COLUMN ledger_issuer_certificate_b64 TEXT")
 
     # --- enrollment ---
 
@@ -184,8 +229,10 @@ class Store:
                 """INSERT OR REPLACE INTO devices
                    (device_id, platform, public_key_pem, enrolled_at, package_name,
                     certificate_sha256, attestation_chain_json, ios_key_id, ios_receipt_b64,
-                    ios_assertion_counter, status, approved_at, approved_by)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    ios_assertion_counter, ledger_code_hash_hex, ledger_owner_certificate_b64,
+                    ledger_device_public_key_hex, ledger_issuer_certificate_b64,
+                    status, approved_at, approved_by)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     device.device_id,
                     device.platform,
@@ -199,6 +246,10 @@ class Store:
                     device.ios_key_id,
                     device.ios_receipt_b64,
                     device.ios_assertion_counter,
+                    device.ledger_code_hash_hex,
+                    device.ledger_owner_certificate_b64,
+                    device.ledger_device_public_key_hex,
+                    device.ledger_issuer_certificate_b64,
                     device.status,
                     _iso(device.approved_at) if device.approved_at else None,
                     device.approved_by,
@@ -250,6 +301,10 @@ class Store:
             ios_key_id=row["ios_key_id"],
             ios_receipt_b64=row["ios_receipt_b64"],
             ios_assertion_counter=row["ios_assertion_counter"],
+            ledger_code_hash_hex=row["ledger_code_hash_hex"],
+            ledger_owner_certificate_b64=row["ledger_owner_certificate_b64"],
+            ledger_device_public_key_hex=row["ledger_device_public_key_hex"],
+            ledger_issuer_certificate_b64=row["ledger_issuer_certificate_b64"],
             status=row["status"],
             approved_at=_parse_iso(row["approved_at"]) if row["approved_at"] else None,
             approved_by=row["approved_by"],

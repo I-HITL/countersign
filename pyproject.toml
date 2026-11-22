@@ -1,7 +1,7 @@
 [project]
 name = "countersign"
 version = "0.1.0"
-description = "Biometric approval demo for Android and iOS with a shared verification backend"
+description = "Human approval demo for Android, iOS and Ledger devices with a shared verification backend"
 license = "MIT"
 requires-python = ">=3.13"
 dependencies = [
@@ -21,6 +21,15 @@ dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+]
+# Host-side tools for Ledger devices (ledger/host/): APDU transport for the
+# bridge, Ledger's secure-channel client for provisioning, and ECDSA public
+# key recovery for pinning the Owner key.
+ledger = [
+    "ledgercomm[hid]>=1.2.1",
+    "ledgerwallet>=0.5.1",
+    "ledgerblue>=0.1.50",
+    "ecdsa>=0.19",
 ]
 
 [tool.pytest.ini_options]

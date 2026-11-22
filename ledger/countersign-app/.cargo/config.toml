@@ -1,0 +1,13 @@
+[target.apex_p]
+runner = "speculos -m apex_p"
+
+[build]
+target = "apex_p"
+
+[profile.release]
+opt-level = 'z'
+lto = true
+
+[unstable]
+build-std = ["core", "alloc"]
+build-std-features = ["compiler-builtins-mem"]

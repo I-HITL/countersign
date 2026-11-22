@@ -74,6 +74,66 @@ def test_default_both_platforms_still_require_google_credentials(strict_ios_envi
         load_config()
 
 
+@pytest.fixture
+def strict_ledger_environment(strict_ios_environment, monkeypatch):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    owner = ec.generate_private_key(ec.SECP256K1()).public_key()
+    owner_hex = owner.public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint).hex()
+    monkeypatch.setenv("COUNTERSIGN_ENABLED_PLATFORMS", "ledger")
+    for key in ("COUNTERSIGN_IOS_APP_ID", "COUNTERSIGN_IOS_BUNDLE_VERSION", "COUNTERSIGN_IOS_ATTESTATION_ROOTS_PATH"):
+        monkeypatch.delenv(key)
+    monkeypatch.setenv("COUNTERSIGN_LEDGER_OWNER_PUBLIC_KEYS", owner_hex)
+    monkeypatch.setenv("COUNTERSIGN_LEDGER_CODE_HASH", "ab" * 32)
+
+
+def test_strict_ledger_pins_an_owner_key_and_a_code_hash(strict_ledger_environment):
+    config = load_config()
+    assert config.enabled_platforms == frozenset({"ledger"})
+    assert len(config.ledger_owner_public_keys) == 1
+    # Ledger's published root of trust ships with the repository and is loaded by default.
+    assert len(config.ledger_root_public_keys) == 1
+    assert config.ledger_code_hash == bytes.fromhex("ab" * 32)
+    assert config.integrity_verifier is None and not config.ios_trusted_attestation_roots
+
+
+def test_strict_ledger_requires_the_code_hash(strict_ledger_environment, monkeypatch):
+    monkeypatch.delenv("COUNTERSIGN_LEDGER_CODE_HASH")
+    with pytest.raises(RuntimeError, match="COUNTERSIGN_LEDGER_CODE_HASH"):
+        load_config()
+
+
+def test_strict_ledger_works_with_the_bundled_root_alone(strict_ledger_environment, monkeypatch):
+    monkeypatch.delenv("COUNTERSIGN_LEDGER_OWNER_PUBLIC_KEYS")
+    config = load_config()
+    assert config.ledger_root_public_keys and not config.ledger_owner_public_keys
+
+
+def test_strict_ledger_needs_some_trust_root(strict_ledger_environment, monkeypatch):
+    monkeypatch.delenv("COUNTERSIGN_LEDGER_OWNER_PUBLIC_KEYS")
+    monkeypatch.setenv("COUNTERSIGN_LEDGER_ROOT_PUBLIC_KEYS", "")
+    with pytest.raises(RuntimeError, match="COUNTERSIGN_LEDGER_ROOT_PUBLIC_KEYS or COUNTERSIGN_LEDGER_OWNER_PUBLIC_KEYS"):
+        load_config()
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("COUNTERSIGN_LEDGER_OWNER_PUBLIC_KEYS", "nothex"),
+        ("COUNTERSIGN_LEDGER_OWNER_PUBLIC_KEYS", "04" + "00" * 10),
+        ("COUNTERSIGN_LEDGER_ROOT_PUBLIC_KEYS", "nothex"),
+        ("COUNTERSIGN_LEDGER_ROOT_PUBLIC_KEYS", "/nonexistent/roots.txt"),
+        ("COUNTERSIGN_LEDGER_CODE_HASH", "zz"),
+        ("COUNTERSIGN_LEDGER_CODE_HASH", "ab" * 31),
+    ],
+)
+def test_malformed_ledger_trust_settings_fail_startup(strict_ledger_environment, monkeypatch, key, value):
+    monkeypatch.setenv(key, value)
+    with pytest.raises(RuntimeError, match=key):
+        load_config()
+
+
 @pytest.mark.parametrize("value", ["", "windows", "ios,unknown"])
 def test_invalid_enabled_platforms_fail_startup(strict_ios_environment, monkeypatch, value):
     monkeypatch.setenv("COUNTERSIGN_ENABLED_PLATFORMS", value)
@@ -89,10 +149,10 @@ def test_empty_ios_trust_store_fails_startup(strict_ios_environment, monkeypatch
         load_config()
 
 
-@pytest.fixture(params=["android", "ios"])
+@pytest.fixture(params=["android", "ios", "ledger"])
 def disabled_platform(request, monkeypatch):
     disabled = request.param
-    enabled = frozenset({"android", "ios"} - {disabled})
+    enabled = frozenset({"android", "ios", "ledger"} - {disabled})
     config = dataclasses.replace(app.state.config, enabled_platforms=enabled)
     if disabled == "android":
         config.integrity_verifier = None
@@ -119,6 +179,18 @@ def test_existing_enrollment_cannot_advance_when_platform_disabled(disabled_plat
     client = TestClient(app, headers=DEVICE_HEADERS)
     if disabled_platform == "android":
         attempts = [("complete", {"attestation_chain_der_b64": [], "integrity_token": "unused"})]
+    elif disabled_platform == "ledger":
+        attempts = [
+            (
+                "endorsement",
+                {
+                    "endorsement_public_key_b64": "",
+                    "code_hash_b64": "",
+                    "owner_certificate_b64": "",
+                    "challenge_signature_b64": "",
+                },
+            )
+        ]
     else:
         attempts = [
             ("attestation", {"key_id": "unused", "attestation_b64": ""}),

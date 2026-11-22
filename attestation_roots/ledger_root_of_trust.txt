@@ -1,0 +1,6 @@
+# Ledger's published root of trust: the secp256k1 public key that signs the
+# issuer certificate of every genuine device's Secure Element. Published in
+# Ledger's device user guides ("Root of trust ... for the current batch") and
+# the default issuer key of ledgerblue.checkGenuine. Verified against a Ledger
+# Flex (OS 1.7.0) on 2026-11-02. One uncompressed hex key per line.
+0490f5c9d15a0134bb019d2afd0bf297149738459706e7ac5be4abc350a1f818057224fce12ec9a65de18ec34d6e8c24db927835ea1692b14c32e9836a75dad609

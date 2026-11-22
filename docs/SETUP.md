@@ -12,6 +12,8 @@ Pick the backend for your device, then follow the [demo workflow](#run-the-demo)
 | --- | --- | --- |
 | Android emulator | [Emulator backend](#android-emulator-backend) (simulated checks, loopback only) | Demo page or API |
 | Physical Android or iPhone | [Physical-device backend](#physical-device-backend) (strict verification, HTTPS) | API |
+| Ledger emulator (Speculos) | [Ledger emulator backend](#ledger-emulator-backend) (Speculos keys pinned, loopback only) | Demo page or API |
+| Physical Ledger | [Physical-device backend](#physical-device-backend) (strict verification; loopback HTTP is fine, the bridge runs on the same host) | API |
 
 ## Android emulator backend
 
@@ -23,6 +25,14 @@ Keep this process running. It serves `http://127.0.0.1:8001`, uses a separate da
 
 Attestation and Play Integrity are simulated. Keep this backend on loopback. Continue with [Android emulator setup](../android/countersign-app/README.md#emulator-demo).
 
+## Ledger emulator backend
+
+```sh
+./run_ledger_simulation.command
+```
+
+Serves `http://127.0.0.1:8002` with its own database in `runs/ledger-simulation/`, the development tokens above, and the Speculos emulator's Owner key and code hash pinned, so the real Ledger verification runs end to end. Continue with the [Ledger emulator demo](../ledger/countersign-app/README.md#emulator-demo-no-device-needed).
+
 ## Physical-device backend
 
 The platform guides ([iPhone](../ios/countersign-app/README.md), [physical Android](../android/countersign-app/README.md#physical-device-with-real-attestation)) walk through the whole sequence and link back here for two shared steps.
@@ -31,7 +41,8 @@ The platform guides ([iPhone](../ios/countersign-app/README.md), [physical Andro
 
 ```sh
 cp .env.ios.example .env      # iPhone
-cp .env.android.example .env  # physical Android (use one or the other)
+cp .env.android.example .env  # physical Android
+cp .env.ledger.example .env   # physical Ledger (use one of the three)
 chmod 600 .env
 ```
 
@@ -41,7 +52,7 @@ Generate two different tokens and paste them into `COUNTERSIGN_API_TOKEN` (devic
 python3 -c 'import secrets; print(secrets.token_urlsafe(32)); print(secrets.token_urlsafe(32))'
 ```
 
-For both platforms on one backend, set `COUNTERSIGN_ENABLED_PLATFORMS=android,ios` and supply both sets of settings. Keep `.env`, service-account JSON, signing keys and databases out of Git.
+For several platforms on one backend, list them in `COUNTERSIGN_ENABLED_PLATFORMS` (for example `android,ios,ledger`) and supply every platform's settings. Keep `.env`, service-account JSON, signing keys and databases out of Git.
 
 ### Start the backend and tunnel
 
@@ -55,7 +66,7 @@ curl --fail http://127.0.0.1:8000/health
 
 Health must report `verification_mode: strict` and your enabled platforms. Missing credentials or trust roots stop startup. Keep `COUNTERSIGN_DEV_MODE`, `COUNTERSIGN_SKIP_ATTESTATION` and `COUNTERSIGN_SKIP_INTEGRITY` at `0`.
 
-The phone needs an HTTPS URL. With Node.js installed, [LocalTunnel](https://github.com/localtunnel/localtunnel) can forward port 8000 (its URL changes on restart):
+A Ledger's bridge runs on the backend host and can use `http://127.0.0.1:8000` directly. The phone needs an HTTPS URL. With Node.js installed, [LocalTunnel](https://github.com/localtunnel/localtunnel) can forward port 8000 (its URL changes on restart):
 
 ```sh
 npx --yes localtunnel@2.0.2 --port 8000 --local-host 127.0.0.1
@@ -67,9 +78,9 @@ The app gets only the **device token**; the administrator token stays with the o
 
 ## Run the demo
 
-1. Run the mobile app and tap **Enroll this device**. On an iPhone, complete the Face ID prompt; on the Android emulator, send the simulated fingerprint described in the Android guide. The app should show **Pending administrator approval**.
+1. Run the mobile app and tap **Enroll this device** (on a Ledger, run `bridge.py enroll` and confirm on the device). On an iPhone, complete the Face ID prompt; on the Android emulator, send the simulated fingerprint described in the Android guide. The app should show **Pending administrator approval**.
 2. Activate the enrollment as the administrator, matching the device ID shown in the app:
-   - **Emulator backend:** open [the demo page](http://127.0.0.1:8001/v1/demo), enter the administrator token, and click **Approve enrollment**.
+   - **Emulator backends:** open the demo page ([Android](http://127.0.0.1:8001/v1/demo), [Ledger](http://127.0.0.1:8002/v1/demo)), enter the administrator token, and click **Approve enrollment**.
    - **Real backend:** the demo page is disabled in strict mode, so use the API. Set `HOST` to your HTTPS URL and `ADMIN` to `COUNTERSIGN_ADMIN_API_TOKEN`:
 
      ```sh
@@ -78,7 +89,7 @@ The app gets only the **device token**; the administrator token stays with the o
        -d '{"administrator":"you"}' $HOST/v1/admin/enrollments/<device_id>/approve
      ```
 
-   Refresh the iPhone; Android refreshes automatically while its home screen is visible.
+   Refresh the iPhone; Android refreshes automatically while its home screen is visible; on a Ledger, run `bridge.py status`.
 3. Send a request to the activated device (the demo page's **Send** button, or on the real backend):
 
    ```sh
@@ -87,7 +98,7 @@ The app gets only the **device token**; the administrator token stays with the o
      $HOST/v1/approvals
    ```
 
-4. Open the request on the phone, check its text and expiry, and approve with biometrics or decline. On the emulator, send the fingerprint ID used during Android Settings enrollment, as described in the Android guide.
+4. Open the request on the phone, check its text and expiry, and approve with biometrics or decline. On the emulator, send the fingerprint ID used during Android Settings enrollment, as described in the Android guide. On a Ledger, `bridge.py pending` lists requests and `bridge.py approve <ref>` shows one on the device, where it is approved or rejected.
 5. Check the final status (the demo page shows it, or on the real backend):
 
    ```sh
@@ -95,6 +106,6 @@ The app gets only the **device token**; the administrator token stays with the o
    curl -s -H "Authorization: Bearer $ADMIN" $HOST/v1/admin/approvals/<ref>/proof   # approved requests only
    ```
 
-   The proof holds the signed message, the signature, the enrolled public key and, for Android, the key attestation chain, so a third party can re-verify the approval. Expired requests cannot be approved; create another request to retry.
+   The proof holds the signed message, the signature, the enrolled public key and, for Android, the key attestation chain (for a Ledger, the code hash and the Owner certificate), so a third party can re-verify the approval. Expired requests cannot be approved; create another request to retry.
 
 The API reference is available at `/docs` on either backend. Device operations use `COUNTERSIGN_API_TOKEN`; enrollment activation, request creation, and administrator views use `COUNTERSIGN_ADMIN_API_TOKEN`.

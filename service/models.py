@@ -7,12 +7,13 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-# The two platforms' attestation proofs are genuinely different shapes
+# The platforms' attestation proofs are genuinely different shapes
 # (Android: a one-shot Key Attestation cert chain; iOS: a two-round App
-# Attest attestation-then-binding-assertion) -- `platform` is how a single
-# shared enrollment/approval protocol tells them apart, not something that
-# gets abstracted away.
-Platform = Literal["android", "ios"]
+# Attest attestation-then-binding-assertion; Ledger: a one-shot endorsement
+# key + Owner certificate + code hash) -- `platform` is how a single shared
+# enrollment/approval protocol tells them apart, not something that gets
+# abstracted away.
+Platform = Literal["android", "ios", "ledger"]
 
 
 class ApprovalStatus(str, enum.Enum):
@@ -62,6 +63,15 @@ class EnrolledDevice:
     ios_key_id: str | None = None
     ios_receipt_b64: str | None = None
     ios_assertion_counter: int | None = None
+    # Ledger-only; None otherwise. The code hash is folded into every
+    # endorsement signature by Ledger OS, so approvals verify over
+    # message || code_hash. The Owner certificate is kept for the proof.
+    ledger_code_hash_hex: str | None = None
+    ledger_owner_certificate_b64: str | None = None
+    # Ledger device chain (root -> device key -> endorsement key), when the
+    # device was provisioned through the bridge; None for Owner-certified keys.
+    ledger_device_public_key_hex: str | None = None
+    ledger_issuer_certificate_b64: str | None = None
 
 
 @dataclasses.dataclass
@@ -142,6 +152,31 @@ class SubmitIosBindingRequest(BaseModel):
     assertion_b64: str = Field(description="The App Attest key's assertion over the same payload.")
 
 
+class SubmitLedgerEndorsementRequest(BaseModel):
+    """Ledger one-shot enrollment: the app returns its slot-1 endorsement
+    public key, the SHA-256 of its own code (as reported by Ledger OS), the
+    Owner certificate over that key, and a scheme-1 signature over the
+    enrollment challenge. See service/attestation/ledger.py."""
+
+    endorsement_public_key_b64: str = Field(description="65-byte uncompressed secp256k1 point.")
+    code_hash_b64: str = Field(description="32-byte application hash reported by the device.")
+    owner_certificate_b64: str = Field(
+        description="The slot's stored certificate: the device key's DER signature over "
+        "0xFF || public key when provisioned through the bridge, otherwise an Owner's "
+        "signature over 0xFE || public key."
+    )
+    challenge_signature_b64: str = Field(
+        description="DER ECDSA signature by the endorsement key over SHA-256(challenge || code_hash)."
+    )
+    # Device chain captured at provisioning (ledger/host/bridge.py provision).
+    # Absent for Owner-certified keys (Speculos, custom-CA provisioning).
+    device_public_key_b64: str | None = Field(default=None, description="65-byte device key from the issuer certificate.")
+    issuer_certificate_header_b64: str | None = Field(default=None, description="Issuer certificate header bytes.")
+    issuer_signature_b64: str | None = Field(
+        default=None, description="Ledger root's DER signature over 0x02 || header || device public key."
+    )
+
+
 class CreateApprovalRequest(BaseModel):
     device_id: str
     text: str
@@ -163,7 +198,7 @@ class PendingApprovalView(BaseModel):
 
 class CompleteApprovalRequest(BaseModel):
     signature_b64: str
-    # Required for Android devices; forbidden for iOS devices in this protocol.
+    # Required for Android devices; forbidden for iOS and Ledger devices in this protocol.
     integrity_token: str | None = None
 
 
@@ -176,7 +211,9 @@ class CompleteApprovalResponse(BaseModel):
 class ApprovalProof(BaseModel):
     """Everything a third party needs to verify an approval: the signed message,
     the signature, and the enrolled key with the attestation chain that vouches
-    for it. The chain is absent for iOS, whose evidence is not exported."""
+    for it. The chain is absent for iOS, whose evidence is not exported. A
+    Ledger approval signature covers message || code_hash, and its key is
+    vouched for by the Owner certificate (see service/attestation/ledger.py)."""
 
     ref: str
     platform: Platform
@@ -184,3 +221,7 @@ class ApprovalProof(BaseModel):
     signature_b64: str
     public_key_pem: str
     attestation_chain_der_b64: list[str] | None = None
+    ledger_code_hash_hex: str | None = None
+    ledger_owner_certificate_b64: str | None = None
+    ledger_device_public_key_hex: str | None = None
+    ledger_issuer_certificate_b64: str | None = None

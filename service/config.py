@@ -10,7 +10,11 @@ import os
 
 from cryptography import x509
 
+from cryptography.hazmat.primitives.asymmetric import ec
+
 from .attestation import SecurityLevel
+from .attestation.base import AttestationError
+from .attestation.ledger import parse_owner_public_keys
 from .integrity import FakeIntegrityVerifier, IntegrityPolicy, IntegrityVerifier, PlayIntegrityVerifier
 
 
@@ -33,6 +37,12 @@ class Config:
     ios_attestation_environment: str
     ios_trusted_attestation_roots: list[x509.Certificate]
     ios_bundle_version: str
+    # Ledger: Ledger's published root(s) of trust for device chains, optional
+    # Owner key(s) that certify endorsement keys directly, and the pinned hash
+    # of the Countersign Ledger app. See service/attestation/ledger.py.
+    ledger_root_public_keys: list[ec.EllipticCurvePublicKey]
+    ledger_owner_public_keys: list[ec.EllipticCurvePublicKey]
+    ledger_code_hash: bytes | None
 
 
 def _load_pem_roots(path: str) -> list[x509.Certificate]:
@@ -74,13 +84,14 @@ def _split_pem_certs(blob: bytes) -> list[bytes]:
 
 def load_config() -> Config:
     enabled_platforms = frozenset(
-        value.strip() for value in os.environ.get("COUNTERSIGN_ENABLED_PLATFORMS", "android,ios").split(",")
+        value.strip() for value in os.environ.get("COUNTERSIGN_ENABLED_PLATFORMS", "android,ios,ledger").split(",")
         if value.strip()
     )
-    if not enabled_platforms or enabled_platforms - {"android", "ios"}:
-        raise RuntimeError("COUNTERSIGN_ENABLED_PLATFORMS must contain android, ios, or both")
+    if not enabled_platforms or enabled_platforms - {"android", "ios", "ledger"}:
+        raise RuntimeError("COUNTERSIGN_ENABLED_PLATFORMS must contain one or more of android, ios, ledger")
     android_enabled = "android" in enabled_platforms
     ios_enabled = "ios" in enabled_platforms
+    ledger_enabled = "ledger" in enabled_platforms
     dev_mode = os.environ.get("COUNTERSIGN_DEV_MODE") == "1"
     # Explicit second opt-in, on top of dev_mode, so dev_mode alone (e.g. to
     # use FakeIntegrityVerifier) doesn't silently also disable real
@@ -185,6 +196,44 @@ def load_config() -> Config:
     if ios_enabled and ios_attestation_environment not in {"development", "production"}:
         raise RuntimeError("COUNTERSIGN_IOS_ATTESTATION_ENVIRONMENT must be development or production")
 
+    # Ledger's published root of trust ships with the repository; the Owner
+    # keys are an alternative trust root (Speculos, custom-CA provisioning).
+    ledger_roots_value = os.environ.get(
+        "COUNTERSIGN_LEDGER_ROOT_PUBLIC_KEYS",
+        os.path.join(os.path.dirname(os.path.dirname(__file__)), "attestation_roots", "ledger_root_of_trust.txt"),
+    )
+    ledger_owner_keys_value = os.environ.get("COUNTERSIGN_LEDGER_OWNER_PUBLIC_KEYS", "")
+    ledger_code_hash_hex = os.environ.get("COUNTERSIGN_LEDGER_CODE_HASH", "")
+    if ledger_enabled and not dev_mode and not ledger_code_hash_hex:
+        raise RuntimeError("COUNTERSIGN_LEDGER_CODE_HASH must be set unless COUNTERSIGN_DEV_MODE=1")
+    ledger_root_public_keys: list[ec.EllipticCurvePublicKey] = []
+    ledger_owner_public_keys: list[ec.EllipticCurvePublicKey] = []
+    if ledger_enabled:
+        for name, value, target in (
+            ("COUNTERSIGN_LEDGER_ROOT_PUBLIC_KEYS", ledger_roots_value, ledger_root_public_keys),
+            ("COUNTERSIGN_LEDGER_OWNER_PUBLIC_KEYS", ledger_owner_keys_value, ledger_owner_public_keys),
+        ):
+            if not value:
+                continue
+            try:
+                target.extend(parse_owner_public_keys(value))
+            except (AttestationError, OSError) as exc:
+                raise RuntimeError(f"{name}: {exc}") from None
+            if not target:
+                raise RuntimeError(f"{name} contains no public keys")
+        if not dev_mode and not ledger_root_public_keys and not ledger_owner_public_keys:
+            raise RuntimeError(
+                "COUNTERSIGN_LEDGER_ROOT_PUBLIC_KEYS or COUNTERSIGN_LEDGER_OWNER_PUBLIC_KEYS must name at least one key"
+            )
+    ledger_code_hash: bytes | None = None
+    if ledger_enabled and ledger_code_hash_hex:
+        try:
+            ledger_code_hash = bytes.fromhex(ledger_code_hash_hex)
+        except ValueError:
+            raise RuntimeError("COUNTERSIGN_LEDGER_CODE_HASH must be hex") from None
+        if len(ledger_code_hash) != 32:
+            raise RuntimeError("COUNTERSIGN_LEDGER_CODE_HASH must be a 32-byte SHA-256 in hex")
+
     return Config(
         enabled_platforms=enabled_platforms,
         dev_mode=dev_mode,
@@ -202,4 +251,7 @@ def load_config() -> Config:
         ios_attestation_environment=ios_attestation_environment,
         ios_trusted_attestation_roots=ios_trusted_roots,
         ios_bundle_version=ios_bundle_version,
+        ledger_root_public_keys=ledger_root_public_keys,
+        ledger_owner_public_keys=ledger_owner_public_keys,
+        ledger_code_hash=ledger_code_hash,
     )

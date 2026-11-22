@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse
 
 from . import attestation, crypto
 from .attestation import ios as ios_attestation
+from .attestation import ledger as ledger_attestation
 from .attestation.base import AttestationError
 from .config import Config, load_config
 from .integrity import IntegrityVerifier, check_verdict, compute_request_hash
@@ -41,6 +42,7 @@ from .models import (
     SubmitIosAttestationRequest,
     SubmitIosAttestationResponse,
     SubmitIosBindingRequest,
+    SubmitLedgerEndorsementRequest,
 )
 from .store import Store
 
@@ -122,7 +124,8 @@ def begin_enrollment(body: BeginEnrollmentRequest) -> BeginEnrollmentResponse:
 @router.post("/enroll/{enrollment_id}/complete", response_model=CompleteEnrollmentResponse)
 async def complete_enrollment(enrollment_id: str, body: CompleteEnrollmentRequest) -> CompleteEnrollmentResponse:
     """Android only -- see /enroll/{enrollment_id}/attestation and
-    .../binding for iOS's two-round equivalent."""
+    .../binding for iOS's two-round equivalent, and .../endorsement for
+    Ledger's one-shot equivalent."""
     _require_platform_enabled("android")
     store: Store = app.state.store
     config: Config = app.state.config
@@ -330,6 +333,99 @@ def submit_ios_binding(enrollment_id: str, body: SubmitIosBindingRequest) -> Com
     return CompleteEnrollmentResponse(device_id=device_id, status="pending_manual_approval")
 
 
+@router.post("/enroll/{enrollment_id}/endorsement", response_model=CompleteEnrollmentResponse)
+def submit_ledger_endorsement(enrollment_id: str, body: SubmitLedgerEndorsementRequest) -> CompleteEnrollmentResponse:
+    """Ledger one-shot enrollment. The device proves possession of an
+    endorsement key and reports the code hash that Ledger OS folds into every
+    signature it makes. The key is attested either by the device chain
+    (Ledger root -> device key -> endorsement key, captured at provisioning)
+    or by a certificate from a configured Owner. The challenge signature is
+    always verified; the chain/Owner and code-hash checks are the attestation
+    steps. See docs/SECURITY.md."""
+    _require_platform_enabled("ledger")
+    store: Store = app.state.store
+    config: Config = app.state.config
+
+    enrollment = store.get_enrollment(enrollment_id)
+    if enrollment is None:
+        raise HTTPException(404, "unknown or already-completed enrollment_id")
+    if enrollment.platform != "ledger":
+        raise HTTPException(400, "this enrollment_id was started for a different platform")
+
+    try:
+        public_key_raw = ledger_attestation.decode_b64(body.endorsement_public_key_b64, "endorsement_public_key_b64")
+        code_hash = ledger_attestation.decode_b64(body.code_hash_b64, "code_hash_b64")
+        certificate = ledger_attestation.decode_b64(body.owner_certificate_b64, "owner_certificate_b64")
+        public_key = ledger_attestation.public_key_from_uncompressed(public_key_raw)
+        chain = None
+        if body.device_public_key_b64 is not None:
+            if body.issuer_certificate_header_b64 is None or body.issuer_signature_b64 is None:
+                raise AttestationError("device_public_key_b64 requires issuer_certificate_header_b64 and issuer_signature_b64")
+            chain = (
+                ledger_attestation.decode_b64(body.device_public_key_b64, "device_public_key_b64"),
+                ledger_attestation.decode_b64(body.issuer_certificate_header_b64, "issuer_certificate_header_b64"),
+                ledger_attestation.decode_b64(body.issuer_signature_b64, "issuer_signature_b64"),
+            )
+            ledger_attestation.public_key_from_uncompressed(chain[0])
+    except AttestationError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if len(code_hash) != ledger_attestation.CODE_HASH_LENGTH:
+        raise HTTPException(400, "code_hash_b64 must decode to 32 bytes")
+    public_key_pem = crypto.public_key_to_pem(public_key)
+
+    reasons: list[str] = []
+    if config.skip_attestation:
+        pass  # dev-mode-only escape hatch -- see Config.skip_attestation.
+    else:
+        if chain is not None:
+            # Publicly verifiable: the certificate is the device key's signature
+            # over the endorsement key, and the device key chains to Ledger's root.
+            try:
+                ledger_attestation.verify_device_chain(chain[0], chain[1], chain[2], public_key_raw, certificate, config.ledger_root_public_keys)
+            except AttestationError as exc:
+                reasons.append(f"device chain: {exc}")
+        elif config.ledger_owner_public_keys:
+            try:
+                ledger_attestation.verify_owner_certificate(public_key_raw, certificate, config.ledger_owner_public_keys)
+            except AttestationError as exc:
+                reasons.append(f"owner certificate: {exc}")
+        elif not config.dev_mode:
+            reasons.append("device chain: no device chain submitted and no Ledger owner public keys configured")
+        # dev_mode with neither chain nor owner keys: certificate trust intentionally skipped.
+        if config.ledger_code_hash is not None and code_hash != config.ledger_code_hash:
+            reasons.append("code hash: device reports a different application hash than the pinned one")
+    # Proof of possession, bound to this enrollment's challenge and to the
+    # reported code hash. Never skipped, like iOS's confirmation-key check.
+    if not ledger_attestation.verify_endorsement_signature(
+        public_key_pem, enrollment.challenge, code_hash, body.challenge_signature_b64
+    ):
+        reasons.append("challenge signature does not verify under the endorsement key with the reported code hash")
+
+    if reasons:
+        logger.warning("ledger enrollment %s rejected: %s", enrollment_id, reasons)
+        store.consume_enrollment(enrollment_id)
+        raise HTTPException(400, {"reasons": reasons})
+
+    device_id = hashlib.sha256(public_key_pem.encode("ascii")).hexdigest()
+    store.add_device(
+        EnrolledDevice(
+            device_id=device_id,
+            platform="ledger",
+            public_key_pem=public_key_pem,
+            enrolled_at=dt.datetime.now(dt.timezone.utc),
+            ledger_code_hash_hex=code_hash.hex(),
+            ledger_owner_certificate_b64=base64.b64encode(certificate).decode("ascii"),
+            ledger_device_public_key_hex=chain[0].hex() if chain else None,
+            # header || signature, as the dashboard's GET_CERTIFICATE returned them.
+            ledger_issuer_certificate_b64=base64.b64encode(bytes([len(chain[1])]) + chain[1] + bytes([len(chain[2])]) + chain[2]).decode("ascii")
+            if chain
+            else None,
+        )
+    )
+    store.consume_enrollment(enrollment_id)
+    return CompleteEnrollmentResponse(device_id=device_id, status="pending_manual_approval")
+
+
 @router.get("/enrollments/{device_id}")
 def enrollment_status(device_id: str) -> dict[str, str]:
     store: Store = app.state.store
@@ -437,6 +533,10 @@ def get_approval_proof(ref: str) -> ApprovalProof:
         signature_b64=approval.signature_b64,
         public_key_pem=device.public_key_pem,
         attestation_chain_der_b64=device.attestation_chain_der_b64,
+        ledger_code_hash_hex=device.ledger_code_hash_hex,
+        ledger_owner_certificate_b64=device.ledger_owner_certificate_b64,
+        ledger_device_public_key_hex=device.ledger_device_public_key_hex,
+        ledger_issuer_certificate_b64=device.ledger_issuer_certificate_b64,
     )
 
 
@@ -549,8 +649,15 @@ async def complete_approval(ref: str, body: CompleteApprovalRequest) -> Complete
     if device is None:
         raise HTTPException(500, "approval references a device that is no longer enrolled")
 
+    # The phones sign exactly the displayed UTF-8 message. Ledger OS appends
+    # the app's code hash to whatever the app signs, so a Ledger signature
+    # covers message || code_hash (see service/attestation/ledger.py).
+    signed_bytes = approval.rendered_message.encode("utf-8")
+    if device.platform == "ledger":
+        signed_bytes = ledger_attestation.endorsed_payload(signed_bytes, bytes.fromhex(device.ledger_code_hash_hex or ""))
+
     reasons: list[str] = []
-    if not crypto.verify_signature(device.public_key_pem, approval.rendered_message, body.signature_b64):
+    if not crypto.verify_signature_bytes(device.public_key_pem, signed_bytes, body.signature_b64):
         reasons.append("signature does not verify against the enrolled device key")
 
     if device.platform == "android":
@@ -567,11 +674,11 @@ async def complete_approval(ref: str, body: CompleteApprovalRequest) -> Complete
             if not integrity_ok:
                 reasons.extend(integrity_reasons)
     else:
-        # This protocol uses App Attest only during iOS enrollment. Later
-        # approvals use the bound confirmation key, with no integrity token.
-        # Reject an unexpected token; see docs/SECURITY.md for this limitation.
+        # iOS uses App Attest only during enrollment and Ledger has no
+        # per-approval integrity evidence at all: later approvals rest on the
+        # enrolled key alone. Reject an unexpected token; see docs/SECURITY.md.
         if body.integrity_token is not None:
-            reasons.append("integrity_token must not be sent for ios devices")
+            reasons.append(f"integrity_token must not be sent for {device.platform} devices")
 
     approval.status = ApprovalStatus.APPROVED if not reasons else ApprovalStatus.REJECTED
     approval.signature_b64 = body.signature_b64

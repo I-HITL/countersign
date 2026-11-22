@@ -1,0 +1,12 @@
+# Ledger app manifest (read by Ragger and Ledger's VS Code extension from the
+# repository root). The device app itself lives in ledger/countersign-app.
+[app]
+build_directory = "./ledger/countersign-app"
+sdk = "Rust"
+devices = ["nanox", "nanos+", "stax", "flex", "apex_p"]
+
+[use_cases]
+debug = "--features debug"
+
+[pytest.standalone]
+directory = "./ledger/countersign-app/tests/standalone/"
